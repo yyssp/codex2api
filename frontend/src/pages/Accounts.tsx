@@ -610,7 +610,10 @@ function TestConnectionModal({ account, onClose }: { account: AccountRow; onClos
         </div>
 
         {(output.length > 0 || status === 'connecting' || status === 'streaming') && (
-          <div className="min-h-[80px] max-h-[240px] overflow-auto rounded-xl border border-border bg-muted/30 p-3 text-sm leading-relaxed font-mono whitespace-pre-wrap break-all">
+          <div
+            className="min-h-[80px] max-h-[240px] overflow-auto rounded-xl border border-border bg-muted/30 p-3 text-[20px] leading-[1.8] whitespace-pre-wrap break-all"
+            style={{ fontFamily: 'var(--font-geist-mono)' }}
+          >
             {output.length === 0 && status === 'connecting' && (
               <span className="text-muted-foreground animate-pulse">正在发送测试请求...</span>
             )}
@@ -622,7 +625,10 @@ function TestConnectionModal({ account, onClose }: { account: AccountRow; onClos
         {errorMsg && (
           <div className="max-h-[40vh] overflow-auto rounded-xl border border-red-200 bg-red-50 p-3.5 text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
             <div className="mb-2 text-sm font-semibold">失败详情</div>
-            <pre className="font-mono text-[13px] leading-6 whitespace-pre-wrap break-all">
+            <pre
+              className="text-[20px] leading-[1.8] whitespace-pre-wrap break-all"
+              style={{ fontFamily: 'var(--font-geist-mono)' }}
+            >
               {formattedErrorMsg}
             </pre>
           </div>

@@ -5,6 +5,7 @@
 @theme {
   --font-sans: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', ui-monospace, monospace;
+  --font-geist-mono: 'Geist Mono', 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', ui-monospace, monospace;
 
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
