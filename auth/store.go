@@ -402,6 +402,18 @@ func (s *Store) RemoveAccount(dbID int64) {
 	}
 }
 
+// FindByID 通过数据库 ID 查找运行时账号
+func (s *Store) FindByID(dbID int64) *Account {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, acc := range s.accounts {
+		if acc.DBID == dbID {
+			return acc
+		}
+	}
+	return nil
+}
+
 // RefreshSingle 刷新单个账号（供 admin handler 调用）
 func (s *Store) RefreshSingle(ctx context.Context, dbID int64) error {
 	s.mu.RLock()

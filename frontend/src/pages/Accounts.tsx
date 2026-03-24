@@ -1,5 +1,5 @@
 import type { ChangeEvent } from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import Modal from '../components/Modal'
 import PageHeader from '../components/PageHeader'
@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, Zap } from 'lucide-react'
 
 export default function Accounts() {
   const [showAdd, setShowAdd] = useState(false)
@@ -36,6 +36,7 @@ export default function Accounts() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [refreshingIds, setRefreshingIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
+  const [testingAccount, setTestingAccount] = useState<AccountRow | null>(null)
   const { toast, showToast } = useToast()
 
   const loadAccounts = useCallback(async () => {
@@ -279,6 +280,15 @@ export default function Accounts() {
                             <Button
                               variant="outline"
                               size="sm"
+                              onClick={() => setTestingAccount(account)}
+                              title="测试连接"
+                            >
+                              <Zap className="size-3" />
+                              测试
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={refreshingIds.has(account.id)}
                               onClick={() => void handleRefresh(account)}
                               title="刷新 AT"
@@ -347,6 +357,13 @@ export default function Accounts() {
           </div>
         </Modal>
 
+        {testingAccount && (
+          <TestConnectionModal
+            account={testingAccount}
+            onClose={() => setTestingAccount(null)}
+          />
+        )}
+
         {toast ? (
           <div
             className={`fixed right-6 bottom-6 z-[2000] px-4 py-3 rounded-2xl text-white text-sm font-bold shadow-lg ${
@@ -359,5 +376,167 @@ export default function Accounts() {
         ) : null}
       </>
     </StateShell>
+  )
+}
+
+// ==================== 测试连接弹窗 ====================
+
+interface TestEvent {
+  type: 'test_start' | 'content' | 'test_complete' | 'error'
+  text?: string
+  model?: string
+  success?: boolean
+  error?: string
+}
+
+function TestConnectionModal({ account, onClose }: { account: AccountRow; onClose: () => void }) {
+  const [output, setOutput] = useState<string[]>([])
+  const [status, setStatus] = useState<'connecting' | 'streaming' | 'success' | 'error'>('connecting')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [model, setModel] = useState('')
+  const abortRef = useRef<AbortController | null>(null)
+  const outputEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/admin/accounts/${account.id}/test`, {
+          signal: controller.signal,
+        })
+
+        if (!res.ok) {
+          const body = await res.text()
+          let msg = `HTTP ${res.status}`
+          try {
+            const parsed = JSON.parse(body)
+            if (parsed.error) msg = parsed.error
+          } catch { /* ignore */ }
+          setStatus('error')
+          setErrorMsg(msg)
+          return
+        }
+
+        const reader = res.body?.getReader()
+        if (!reader) {
+          setStatus('error')
+          setErrorMsg('浏览器不支持流式读取')
+          return
+        }
+
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed.startsWith('data: ')) continue
+
+            try {
+              const event: TestEvent = JSON.parse(trimmed.slice(6))
+
+              switch (event.type) {
+                case 'test_start':
+                  setModel(event.model || '')
+                  setStatus('streaming')
+                  break
+                case 'content':
+                  if (event.text) {
+                    setOutput((prev) => [...prev, event.text!])
+                  }
+                  break
+                case 'test_complete':
+                  setStatus(event.success ? 'success' : 'error')
+                  break
+                case 'error':
+                  setStatus('error')
+                  setErrorMsg(event.error || '未知错误')
+                  break
+              }
+            } catch { /* ignore non-JSON lines */ }
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setStatus('error')
+        setErrorMsg(err instanceof Error ? err.message : '连接失败')
+      }
+    }
+
+    void run()
+
+    return () => {
+      controller.abort()
+    }
+  }, [account.id])
+
+  useEffect(() => {
+    outputEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [output])
+
+  const statusLabel = {
+    connecting: '⏳ 连接中...',
+    streaming: '🔄 接收响应...',
+    success: '✅ 测试成功',
+    error: '❌ 测试失败',
+  }[status]
+
+  const statusColor = {
+    connecting: 'text-muted-foreground',
+    streaming: 'text-blue-500',
+    success: 'text-emerald-500',
+    error: 'text-red-500',
+  }[status]
+
+  return (
+    <Modal
+      show={true}
+      title={`测试连接 - ${account.email || `ID ${account.id}`}`}
+      onClose={() => {
+        abortRef.current?.abort()
+        onClose()
+      }}
+      footer={
+        <Button
+          variant="outline"
+          onClick={() => {
+            abortRef.current?.abort()
+            onClose()
+          }}
+        >
+          关闭
+        </Button>
+      }
+    >
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</span>
+          {model && <span className="text-xs font-mono text-muted-foreground">{model}</span>}
+        </div>
+
+        <div className="min-h-[120px] max-h-[300px] overflow-auto rounded-xl border border-border bg-muted/30 p-3 text-sm leading-relaxed font-mono whitespace-pre-wrap">
+          {output.length === 0 && status === 'connecting' && (
+            <span className="text-muted-foreground animate-pulse">正在发送测试请求...</span>
+          )}
+          {output.join('')}
+          <div ref={outputEndRef} />
+        </div>
+
+        {errorMsg && (
+          <div className="rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 p-3 text-sm text-red-600 dark:text-red-400">
+            {errorMsg}
+          </div>
+        )}
+      </div>
+    </Modal>
   )
 }
