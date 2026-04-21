@@ -2498,7 +2498,7 @@ func (h *Handler) MigrateAccounts(c *gin.Context) {
 
 // ListModels 返回支持的模型列表（供前端设置页使用）
 func (h *Handler) ListModels(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"models": proxy.SupportedModels})
+	c.JSON(http.StatusOK, proxy.BuildAdminModelCatalog(h.store.GetModelMapping()))
 }
 
 // ==================== 账号趋势 ====================

@@ -342,7 +342,11 @@ func (db *DB) migrate(ctx context.Context) error {
 	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer migrateCancel()
 	_, err = db.conn.ExecContext(migrateCtx, migrateQuery)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return db.ensurePostgresCredentialUniqueIndexes(ctx)
 }
 
 // ==================== API Keys ====================
@@ -386,6 +390,26 @@ func (db *DB) InsertAPIKey(ctx context.Context, name, key string) (int64, error)
 		`INSERT INTO api_keys (name, key) VALUES ($1, $2)`,
 		name, key,
 	)
+}
+
+func (db *DB) ensurePostgresCredentialUniqueIndexes(ctx context.Context) error {
+	indexes := map[string]string{
+		"idx_accounts_unique_refresh_token_active": `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_unique_refresh_token_active
+			ON accounts ((NULLIF(BTRIM(credentials->>'refresh_token'), '')))
+			WHERE status <> 'deleted' AND NULLIF(BTRIM(credentials->>'refresh_token'), '') IS NOT NULL;`,
+		"idx_accounts_unique_access_token_active": `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_unique_access_token_active
+			ON accounts ((NULLIF(BTRIM(credentials->>'access_token'), '')))
+			WHERE status <> 'deleted' AND NULLIF(BTRIM(credentials->>'access_token'), '') IS NOT NULL;`,
+	}
+	for _, name := range []string{
+		"idx_accounts_unique_access_token_active",
+		"idx_accounts_unique_refresh_token_active",
+	} {
+		if err := db.createIndexAllowingHistoricalDuplicates(ctx, name, indexes[name]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ==================== System Settings ====================

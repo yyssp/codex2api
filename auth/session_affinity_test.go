@@ -147,3 +147,48 @@ func TestUnbindSessionAffinityRemovesMatchingBinding(t *testing.T) {
 		t.Fatalf("proxyURL = %q, want empty fallback proxy", proxyURL)
 	}
 }
+
+func TestCleanupExpiredSessionAffinityRemovesOnlyExpiredBindings(t *testing.T) {
+	now := time.Now()
+	store := &Store{
+		sessionBindings: map[string]sessionAffinity{
+			"expired": {accountID: 1, proxyURL: "http://expired", expiresAt: now.Add(-time.Minute)},
+			"alive":   {accountID: 2, proxyURL: "http://alive", expiresAt: now.Add(time.Minute)},
+		},
+	}
+
+	cleaned := store.cleanupExpiredSessionAffinity(now)
+	if cleaned != 1 {
+		t.Fatalf("cleanupExpiredSessionAffinity() = %d, want 1", cleaned)
+	}
+	if _, ok := store.sessionBindings["expired"]; ok {
+		t.Fatal("expired binding should be removed")
+	}
+	if _, ok := store.sessionBindings["alive"]; !ok {
+		t.Fatal("alive binding should remain")
+	}
+}
+
+func TestRemoveSessionBindingsForAccountRemovesAllMatchingBindings(t *testing.T) {
+	store := &Store{
+		sessionBindings: map[string]sessionAffinity{
+			"session-1": {accountID: 2, proxyURL: "http://a", expiresAt: time.Now().Add(time.Minute)},
+			"session-2": {accountID: 2, proxyURL: "http://b", expiresAt: time.Now().Add(time.Minute)},
+			"session-3": {accountID: 3, proxyURL: "http://c", expiresAt: time.Now().Add(time.Minute)},
+		},
+	}
+
+	removed := store.removeSessionBindingsForAccount(2)
+	if removed != 2 {
+		t.Fatalf("removeSessionBindingsForAccount() = %d, want 2", removed)
+	}
+	if _, ok := store.sessionBindings["session-1"]; ok {
+		t.Fatal("session-1 should be removed")
+	}
+	if _, ok := store.sessionBindings["session-2"]; ok {
+		t.Fatal("session-2 should be removed")
+	}
+	if _, ok := store.sessionBindings["session-3"]; !ok {
+		t.Fatal("session-3 should remain")
+	}
+}

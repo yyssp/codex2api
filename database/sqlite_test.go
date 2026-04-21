@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -143,5 +144,77 @@ func TestUsageLogsFilterByAPIKeyID(t *testing.T) {
 		if usageLog.APIKeyName != "Team A" {
 			t.Fatalf("APIKeyName = %q, want %q", usageLog.APIKeyName, "Team A")
 		}
+	}
+}
+
+func TestSQLiteCredentialUniqueIndexesPreventDuplicateActiveAccounts(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
+
+	db, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New(sqlite) 返回错误: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	rtID, err := db.InsertAccount(ctx, "rt-1", "refresh-token-1", "")
+	if err != nil {
+		t.Fatalf("InsertAccount 返回错误: %v", err)
+	}
+	if _, err := db.InsertAccount(ctx, "rt-dup", "refresh-token-1", ""); err == nil {
+		t.Fatal("duplicate refresh token insert succeeded, want error")
+	}
+
+	atID, err := db.InsertATAccount(ctx, "at-1", "access-token-1", "")
+	if err != nil {
+		t.Fatalf("InsertATAccount 返回错误: %v", err)
+	}
+	if _, err := db.InsertATAccount(ctx, "at-dup", "access-token-1", ""); err == nil {
+		t.Fatal("duplicate access token insert succeeded, want error")
+	}
+
+	if _, err := db.conn.ExecContext(ctx, `UPDATE accounts SET status = 'deleted' WHERE id IN ($1, $2)`, rtID, atID); err != nil {
+		t.Fatalf("UPDATE deleted 返回错误: %v", err)
+	}
+
+	if _, err := db.InsertAccount(ctx, "rt-reuse", "refresh-token-1", ""); err != nil {
+		t.Fatalf("InsertAccount after delete returned error: %v", err)
+	}
+	if _, err := db.InsertATAccount(ctx, "at-reuse", "access-token-1", ""); err != nil {
+		t.Fatalf("InsertATAccount after delete returned error: %v", err)
+	}
+}
+
+func TestSQLiteHistoricalDuplicateCredentialsDoNotBlockMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-duplicates.db")
+
+	conn, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open 返回错误: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE accounts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT DEFAULT '',
+		credentials TEXT NOT NULL DEFAULT '{}',
+		status TEXT DEFAULT 'active'
+	);`); err != nil {
+		t.Fatalf("CREATE TABLE 返回错误: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO accounts (name, credentials, status) VALUES
+		('dup-1', '{"refresh_token":"same-rt"}', 'active'),
+		('dup-2', '{"refresh_token":"same-rt"}', 'active'),
+		('dup-3', '{"access_token":"same-at"}', 'active'),
+		('dup-4', '{"access_token":"same-at"}', 'active')
+	`); err != nil {
+		t.Fatalf("INSERT duplicates 返回错误: %v", err)
+	}
+
+	db := &DB{conn: conn, driver: "sqlite"}
+	if err := db.ensureSQLiteCredentialUniqueIndexes(ctx); err != nil {
+		t.Fatalf("ensureSQLiteCredentialUniqueIndexes 返回错误: %v", err)
 	}
 }

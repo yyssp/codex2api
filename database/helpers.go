@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -178,4 +179,28 @@ func (db *DB) insertRowID(ctx context.Context, postgresQuery string, sqliteQuery
 	var id int64
 	err := db.conn.QueryRowContext(ctx, postgresQuery, args...).Scan(&id)
 	return id, err
+}
+
+func isHistoricalDuplicateIndexBuildError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "could not create unique index") ||
+		strings.Contains(msg, "duplicate key value") ||
+		strings.Contains(msg, "unique constraint failed")
+}
+
+func (db *DB) createIndexAllowingHistoricalDuplicates(ctx context.Context, name string, stmt string) error {
+	if db == nil || db.conn == nil {
+		return nil
+	}
+	if _, err := db.conn.ExecContext(ctx, stmt); err != nil {
+		if isHistoricalDuplicateIndexBuildError(err) {
+			log.Printf("[database] 跳过索引 %s：检测到历史重复凭证，需人工清理后再重建索引: %v", name, err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }

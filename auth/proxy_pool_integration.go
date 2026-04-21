@@ -28,6 +28,10 @@ func NewEnhancedProxyPool(db *database.DB, config *ProxyPoolConfig) *EnhancedPro
 
 // Init 初始化代理池
 func (e *EnhancedProxyPool) Init(ctx context.Context) error {
+	if e.initialized.Load() {
+		e.enabled.Store(true)
+		return nil
+	}
 	if e.db == nil {
 		return nil
 	}
@@ -138,6 +142,18 @@ func (e *EnhancedProxyPool) ReleaseConnection(url string) {
 		return
 	}
 	e.pool.ReleaseConnection(url)
+}
+
+func (e *EnhancedProxyPool) HasProxy(url string) bool {
+	if !e.initialized.Load() {
+		return false
+	}
+	for _, proxyURL := range e.pool.GetAllProxies() {
+		if proxyURL == url {
+			return true
+		}
+	}
+	return false
 }
 
 // ReloadFromDB 从数据库重新加载代理
@@ -275,7 +291,7 @@ func (e *EnhancedProxyPool) SetProxyWeight(url string, weight int64) {
 
 // StoreProxyPoolIntegration Store 与代理池集成
 type StoreProxyPoolIntegration struct {
-	store       *Store
+	store        *Store
 	enhancedPool *EnhancedProxyPool
 	useEnhanced  atomic.Bool
 }
@@ -319,7 +335,7 @@ func (s *StoreProxyPoolIntegration) NextProxy() string {
 	}
 	// 回退到原有实现
 	if s.store != nil {
-		return s.store.NextProxy()
+		return s.store.nextProxyFallback()
 	}
 	return ""
 }
@@ -336,6 +352,26 @@ func (s *StoreProxyPoolIntegration) MarkProxyFailure(url string) {
 	if s.useEnhanced.Load() && s.enhancedPool != nil {
 		s.enhancedPool.MarkProxyFailure(url)
 	}
+}
+
+func (s *StoreProxyPoolIntegration) AcquireConnection(url string) bool {
+	if s.useEnhanced.Load() && s.enhancedPool != nil {
+		return s.enhancedPool.AcquireConnection(url)
+	}
+	return true
+}
+
+func (s *StoreProxyPoolIntegration) ReleaseConnection(url string) {
+	if s.useEnhanced.Load() && s.enhancedPool != nil {
+		s.enhancedPool.ReleaseConnection(url)
+	}
+}
+
+func (s *StoreProxyPoolIntegration) HasProxy(url string) bool {
+	if s.useEnhanced.Load() && s.enhancedPool != nil {
+		return s.enhancedPool.HasProxy(url)
+	}
+	return false
 }
 
 // GetEnhancedPool 获取增强代理池

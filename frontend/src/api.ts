@@ -14,6 +14,7 @@ import type {
   OAuthExchangeResponse,
   OAuthURLResponse,
   OpsOverviewResponse,
+  ModelCatalogResponse,
   StatsResponse,
   CPAExportEntry,
   SystemSettings,
@@ -168,7 +169,7 @@ export const api = {
   getSettings: () => request<SystemSettings>('/settings'),
   updateSettings: (data: Partial<SystemSettings>) =>
     request<SystemSettings>('/settings', { method: 'PUT', body: JSON.stringify(data) }),
-  getModels: () => request<{ models: string[] }>('/models'),
+  getModels: () => request<ModelCatalogResponse>('/models'),
   batchTestAccounts: () =>
     request<{ total: number; success: number; failed: number; banned: number; rate_limited: number }>('/accounts/batch-test', { method: 'POST' }),
   cleanBanned: () =>

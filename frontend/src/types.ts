@@ -208,6 +208,12 @@ export interface SystemSettings {
   resin_platform_name: string
 }
 
+export interface ModelCatalogResponse {
+  models: string[]
+  default_anthropic_mapping: Record<string, string>
+  effective_anthropic_mapping: Record<string, string>
+}
+
 export interface CPAExportEntry {
   type: string
   email: string

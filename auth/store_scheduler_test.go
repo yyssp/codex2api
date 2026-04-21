@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -118,8 +120,8 @@ func TestAccountBaseConcurrencyOverrideControlsDynamicLimit(t *testing.T) {
 
 func TestNeedsUsageProbeSkipsRateLimited(t *testing.T) {
 	acc := &Account{
-		AccessToken: "token",
-		Status:      StatusCooldown,
+		AccessToken:    "token",
+		Status:         StatusCooldown,
 		CooldownReason: "rate_limited",
 	}
 	if acc.NeedsUsageProbe(10 * time.Minute) {
@@ -129,8 +131,8 @@ func TestNeedsUsageProbeSkipsRateLimited(t *testing.T) {
 
 func TestNeedsUsageProbeSkipsUnauthorized(t *testing.T) {
 	acc := &Account{
-		AccessToken: "token",
-		Status:      StatusCooldown,
+		AccessToken:    "token",
+		Status:         StatusCooldown,
 		CooldownReason: "unauthorized",
 	}
 	if acc.NeedsUsageProbe(10 * time.Minute) {
@@ -179,4 +181,87 @@ func TestStoreNextPrefersHigherDispatchScoreWithinTier(t *testing.T) {
 	if got.DBID != premium.DBID {
 		t.Fatalf("Next() picked dbID=%d, want premium account %d", got.DBID, premium.DBID)
 	}
+}
+
+func TestATOnlyExpiredAccountIsUnavailableAndRuntimeStatusError(t *testing.T) {
+	acc := &Account{
+		AccessToken: "token",
+		ExpiresAt:   time.Now().Add(-time.Minute),
+		Status:      StatusReady,
+	}
+
+	if acc.IsAvailable() {
+		t.Fatal("IsAvailable() = true, want false for expired AT-only account")
+	}
+	if got := acc.RuntimeStatus(); got != "error" {
+		t.Fatalf("RuntimeStatus() = %q, want %q", got, "error")
+	}
+	if acc.NeedsRefresh() {
+		t.Fatal("NeedsRefresh() = true, want false for AT-only account without RT")
+	}
+}
+
+func TestExpiredRTBackedAccountCanStillBeScheduledForRefreshFlow(t *testing.T) {
+	acc := &Account{
+		RefreshToken: "rt",
+		AccessToken:  "token",
+		ExpiresAt:    time.Now().Add(-time.Minute),
+		Status:       StatusReady,
+	}
+
+	if !acc.IsAvailable() {
+		t.Fatal("IsAvailable() = false, want true for RT-backed account")
+	}
+	if got := acc.RuntimeStatus(); got != "active" {
+		t.Fatalf("RuntimeStatus() = %q, want %q", got, "active")
+	}
+	if !acc.NeedsRefresh() {
+		t.Fatal("NeedsRefresh() = false, want true for RT-backed expired token")
+	}
+}
+
+func TestStoreNextWithoutFastSchedulerRespectsConcurrencyLimitUnderContention(t *testing.T) {
+	acc := &Account{
+		DBID:        1,
+		AccessToken: "token",
+		Status:      StatusReady,
+	}
+	store := &Store{
+		accounts:       []*Account{acc},
+		maxConcurrency: 1,
+	}
+
+	const workers = 64
+	start := make(chan struct{})
+	results := make(chan *Account, workers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- store.Next()
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	for picked := range results {
+		if picked != nil {
+			successes++
+		}
+	}
+
+	if successes != 1 {
+		t.Fatalf("successful acquisitions = %d, want 1", successes)
+	}
+	if got := atomic.LoadInt64(&acc.ActiveRequests); got != 1 {
+		t.Fatalf("ActiveRequests = %d, want 1", got)
+	}
+
+	store.Release(acc)
 }

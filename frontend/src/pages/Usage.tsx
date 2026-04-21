@@ -10,7 +10,7 @@ import ToastNotice from '../components/ToastNotice'
 import { useDataLoader } from '../hooks/useDataLoader'
 import { useConfirmDialog } from '../hooks/useConfirmDialog'
 import { useToast } from '../hooks/useToast'
-import type { APIKeyRow, UsageLog, UsageStats } from '../types'
+import type { APIKeyRow, ModelCatalogResponse, UsageLog, UsageStats } from '../types'
 import { formatBeijingTime } from '../utils/time'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -32,25 +32,8 @@ function formatTokens(value?: number | null): string {
   return value.toLocaleString()
 }
 
-// Claude 模型 → Codex 模型映射（与后端 defaultAnthropicModelMap 一致）
-const CLAUDE_MODEL_MAP: Record<string, string> = {
-  'claude-opus-4-6': 'gpt-5.4',
-  'claude-opus-4-6-20250610': 'gpt-5.4',
-  'claude-haiku-4-5-20251001': 'gpt-5.4-mini',
-  'claude-haiku-4-5': 'gpt-5.4-mini',
-  'claude-sonnet-4-6': 'gpt-5.3-codex',
-  'claude-sonnet-4-5-20250929': 'gpt-5.2-codex',
-  'claude-opus-4-5-20251101': 'gpt-5.3-codex',
-  'claude-sonnet-4-5-20250514': 'gpt-5.4',
-  'claude-sonnet-4-5': 'gpt-5.4',
-  'claude-sonnet-4-20250514': 'gpt-5.4',
-  'claude-sonnet-4': 'gpt-5.4',
-  'claude-opus-4-20250514': 'gpt-5.4',
-  'claude-opus-4': 'gpt-5.4',
-}
-
-function getCodexModel(model: string): string {
-  return CLAUDE_MODEL_MAP[model] || 'gpt-5.4'
+function getCodexModel(model: string, mapping: Record<string, string>): string {
+  return mapping[model] || 'gpt-5.4'
 }
 
 function getStatusBadgeClassName(statusCode: number): string {
@@ -116,6 +99,11 @@ export default function Usage() {
   const [filterStream, setFilterStream] = useState<'' | 'true' | 'false'>('')
   const [apiKeys, setAPIKeys] = useState<APIKeyRow[]>([])
   const [apiKeyLoadFailed, setAPIKeyLoadFailed] = useState(false)
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogResponse>({
+    models: [],
+    default_anthropic_mapping: {},
+    effective_anthropic_mapping: {},
+  })
   const showFastFilter = false
   const pageSizeOptions = [10, 20, 50, 100]
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null)
@@ -132,7 +120,8 @@ export default function Usage() {
 
   // 仅加载轻量统计（秒级）
   const loadStats = useCallback(async () => {
-    const stats = await api.getUsageStats()
+    const [stats, models] = await Promise.all([api.getUsageStats(), api.getModels()])
+    setModelCatalog(models)
     return { stats }
   }, [])
 
@@ -403,7 +392,7 @@ export default function Usage() {
                 placeholder={t('usage.allModels')}
                 options={[
                   { label: t('usage.allModels'), value: '' },
-                  ...['gpt-5.4', 'gpt-5.4-mini', 'gpt-5', 'gpt-5-codex', 'gpt-5-codex-mini', 'gpt-5.1', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1-codex-max', 'gpt-5.2', 'gpt-5.2-codex', 'gpt-5.3-codex'].map((m) => ({ label: m, value: m })),
+                  ...modelCatalog.models.map((m) => ({ label: m, value: m })),
                 ]}
               />
 
@@ -523,7 +512,7 @@ export default function Usage() {
                             </Badge>
                             {log.model && log.model.startsWith('claude') && (
                               <Badge variant="outline" className="text-[11px] font-medium border-transparent bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">
-                                → {getCodexModel(log.model)}
+                                → {getCodexModel(log.model, modelCatalog.effective_anthropic_mapping)}
                               </Badge>
                             )}
                             {log.reasoning_effort && (

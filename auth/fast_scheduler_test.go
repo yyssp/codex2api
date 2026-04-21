@@ -133,6 +133,18 @@ func TestFastSchedulerSkipsStaleBucketEntryWithoutUpdate(t *testing.T) {
 	}
 }
 
+func TestFastSchedulerSkipsExpiredATOnlyAccount(t *testing.T) {
+	acc := newFastSchedulerTestAccount(1, HealthTierHealthy, 100, 1)
+	acc.ExpiresAt = time.Now().Add(-time.Minute)
+
+	scheduler := NewFastScheduler(1)
+	scheduler.Rebuild([]*Account{acc})
+
+	if got := scheduler.Acquire(); got != nil {
+		t.Fatalf("Acquire() = %+v, want nil for expired AT-only account", got)
+	}
+}
+
 func TestBuildFastSchedulerFromStore(t *testing.T) {
 	store := &Store{
 		accounts: []*Account{

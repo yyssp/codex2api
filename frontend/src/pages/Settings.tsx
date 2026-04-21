@@ -9,7 +9,7 @@ import ToastNotice from '../components/ToastNotice'
 import { useDataLoader } from '../hooks/useDataLoader'
 import { useConfirmDialog } from '../hooks/useConfirmDialog'
 import { useToast } from '../hooks/useToast'
-import type { APIKeyRow, HealthResponse, SystemSettings } from '../types'
+import type { APIKeyRow, HealthResponse, ModelCatalogResponse, SystemSettings } from '../types'
 import { getErrorMessage } from '../utils/error'
 import { formatRelativeTime } from '../utils/time'
 import { Card, CardContent } from '@/components/ui/card'
@@ -28,29 +28,25 @@ import {
 
 import { Trash2, Eye, EyeOff } from 'lucide-react'
 
-// 默认模型映射
-const DEFAULT_MODEL_MAPPING: Record<string, string> = {
-  'claude-opus-4-6': 'gpt-5.4',
-  'claude-opus-4-6-20250610': 'gpt-5.4',
-  'claude-haiku-4-5-20251001': 'gpt-5.4-mini',
-  'claude-haiku-4-5': 'gpt-5.4-mini',
-  'claude-sonnet-4-6': 'gpt-5.3-codex',
-  'claude-sonnet-4-5-20250929': 'gpt-5.2-codex',
-  'claude-opus-4-5-20251101': 'gpt-5.3-codex',
-}
-
 // 模型映射编辑器组件
-function ModelMappingEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ModelMappingEditor({
+  value,
+  onChange,
+  fallbackMapping,
+}: {
+  value: string
+  onChange: (v: string) => void
+  fallbackMapping: Record<string, string>
+}) {
   const { t } = useTranslation()
 
-  let mappings: [string, string][] = []
+  let mappings = Object.entries(fallbackMapping) as [string, string][]
   try {
     const parsed = JSON.parse(value || '{}')
-    const entries = Object.entries(parsed) as [string, string][]
-    // 如果数据库中为空，用默认值填充
-    mappings = entries.length > 0 ? entries : Object.entries(DEFAULT_MODEL_MAPPING) as [string, string][]
+    const merged = { ...fallbackMapping, ...parsed } as Record<string, string>
+    mappings = Object.entries(merged) as [string, string][]
   } catch {
-    mappings = Object.entries(DEFAULT_MODEL_MAPPING) as [string, string][]
+    mappings = Object.entries(fallbackMapping) as [string, string][]
   }
 
   const updateMappings = (entries: [string, string][]) => {
@@ -159,6 +155,11 @@ export default function Settings() {
   const [savingSettings, setSavingSettings] = useState(false)
   const [loadedAdminSecret, setLoadedAdminSecret] = useState('')
   const [modelList, setModelList] = useState<string[]>([])
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogResponse>({
+    models: [],
+    default_anthropic_mapping: {},
+    effective_anthropic_mapping: {},
+  })
   const [visibleKeys, setVisibleKeys] = useState<Set<number>>(new Set())
   const { toast, showToast } = useToast()
   const { confirm, confirmDialog } = useConfirmDialog()
@@ -168,6 +169,7 @@ export default function Settings() {
     setSettingsForm(settings)
     setLoadedAdminSecret(settings.admin_secret ?? '')
     setModelList(modelsResp.models ?? [])
+    setModelCatalog(modelsResp)
     return {
       health,
       keys: keysResponse.keys ?? [],
@@ -708,6 +710,7 @@ export default function Settings() {
             <p className="text-xs text-muted-foreground mb-4">{t('settings2.modelMappingDesc')}</p>
             <ModelMappingEditor
               value={settingsForm.model_mapping}
+              fallbackMapping={modelCatalog.effective_anthropic_mapping}
               onChange={(v) => setSettingsForm(f => ({ ...f, model_mapping: v }))}
             />
           </CardContent>

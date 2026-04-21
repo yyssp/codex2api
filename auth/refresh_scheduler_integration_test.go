@@ -96,3 +96,28 @@ func TestRefreshSchedulerIntegrationCancel(t *testing.T) {
 		t.Fatal("CancelRefreshTask should return false for already cancelled task")
 	}
 }
+
+func TestInitRefreshSchedulerFromEnv(t *testing.T) {
+	t.Setenv("REFRESH_SCHEDULER_ENABLED", "true")
+	t.Setenv("REFRESH_MAX_CONCURRENCY", "3")
+	t.Setenv("REFRESH_BATCH_SIZE", "7")
+
+	store := &Store{}
+	store.InitRefreshSchedulerFromEnv()
+	defer store.DisableRefreshScheduler()
+
+	if !store.RefreshSchedulerEnabled() {
+		t.Fatal("RefreshSchedulerEnabled should be true after InitRefreshSchedulerFromEnv")
+	}
+
+	scheduler := store.GetRefreshScheduler()
+	if scheduler == nil {
+		t.Fatal("GetRefreshScheduler should return non-nil after env init")
+	}
+	if scheduler.config.MaxConcurrency != 3 {
+		t.Fatalf("MaxConcurrency = %d, want 3", scheduler.config.MaxConcurrency)
+	}
+	if scheduler.config.BatchSize != 7 {
+		t.Fatalf("BatchSize = %d, want 7", scheduler.config.BatchSize)
+	}
+}

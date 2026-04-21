@@ -109,6 +109,7 @@ func (h *Handler) Messages(c *gin.Context) {
 
 	// 提取 reasoning effort（从翻译后的 codex body 中）
 	reasoningEffort := extractReasoningEffort(codexBody)
+	resolvedModel := gjson.GetBytes(codexBody, "model").String()
 	sessionID := ResolveSessionID(c.Request.Header, codexBody)
 
 	// 3. 带重试的上游请求
@@ -119,9 +120,9 @@ func (h *Handler) Messages(c *gin.Context) {
 	excludeAccounts := make(map[int64]bool)
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		account, stickyProxyURL := h.nextAccountForSession(sessionID, excludeAccounts)
+		account, stickyProxyURL := h.nextAccountForSession(sessionID, resolvedModel, excludeAccounts)
 		if account == nil {
-			account, stickyProxyURL = h.store.WaitForSessionAvailable(c.Request.Context(), sessionID, 30*time.Second, excludeAccounts)
+			account, stickyProxyURL = h.store.WaitForSessionAvailableForModel(c.Request.Context(), sessionID, 30*time.Second, excludeAccounts, resolvedModel)
 			if account == nil {
 				if lastStatusCode == http.StatusTooManyRequests && len(lastBody) > 0 {
 					sendAnthropicError(c, http.StatusTooManyRequests, "rate_limit_error", "All accounts rate limited")
@@ -133,10 +134,7 @@ func (h *Handler) Messages(c *gin.Context) {
 		}
 
 		start := time.Now()
-		proxyURL := stickyProxyURL
-		if proxyURL == "" {
-			proxyURL = h.store.NextProxy()
-		}
+		proxyURL := h.store.AcquireProxy(stickyProxyURL)
 		useWebsocket := h.cfg != nil && h.cfg.UseWebsocket
 
 		apiKey := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
@@ -164,6 +162,8 @@ func (h *Handler) Messages(c *gin.Context) {
 			if kind := classifyTransportFailure(reqErr); kind != "" {
 				h.store.ReportRequestFailure(account, kind, time.Duration(durationMs)*time.Millisecond)
 			}
+			h.store.MarkProxyFailure(proxyURL)
+			h.store.ReleaseProxy(proxyURL)
 			h.store.Release(account)
 			h.store.UnbindSessionAffinity(sessionID, account.ID())
 			excludeAccounts[account.ID()] = true
@@ -179,14 +179,19 @@ func (h *Handler) Messages(c *gin.Context) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			if kind := classifyHTTPFailure(resp.StatusCode); kind != "" {
-				h.store.ReportRequestFailure(account, kind, time.Duration(durationMs)*time.Millisecond)
-			}
+			h.store.MarkProxySuccess(proxyURL)
 			if usagePct, ok := parseCodexUsageHeaders(resp, account); ok {
 				h.store.PersistUsageSnapshot(account, usagePct)
 			}
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			accountWideFailure := h.applyCooldown(account, resolvedModel, resp.StatusCode, errBody, resp)
+			if accountWideFailure {
+				if kind := classifyHTTPFailure(resp.StatusCode); kind != "" {
+					h.store.ReportRequestFailure(account, kind, time.Duration(durationMs)*time.Millisecond)
+				}
+			}
+			h.store.ReleaseProxy(proxyURL)
 			h.store.Release(account)
 			h.store.UnbindSessionAffinity(sessionID, account.ID())
 			excludeAccounts[account.ID()] = true
@@ -204,7 +209,6 @@ func (h *Handler) Messages(c *gin.Context) {
 				UpstreamEndpoint: "/v1/responses",
 				Stream:           isStream,
 			})
-			h.applyCooldown(account, resp.StatusCode, errBody, resp)
 
 			if isRetryableStatus(resp.StatusCode) && attempt < maxRetries {
 				lastStatusCode = resp.StatusCode
@@ -250,6 +254,8 @@ func (h *Handler) Messages(c *gin.Context) {
 			if !ok {
 				sendAnthropicError(c, http.StatusInternalServerError, "api_error", "Streaming not supported")
 				resp.Body.Close()
+				h.store.MarkProxyFailure(proxyURL)
+				h.store.ReleaseProxy(proxyURL)
 				h.store.Release(account)
 				return
 			}
@@ -358,6 +364,8 @@ func (h *Handler) Messages(c *gin.Context) {
 				h.store.PersistUsageSnapshot(account, usagePct)
 			}
 			h.store.ReportRequestFailure(account, outcome.failureKind, time.Duration(totalDuration)*time.Millisecond)
+			h.store.MarkProxyFailure(proxyURL)
+			h.store.ReleaseProxy(proxyURL)
 			resp.Body.Close()
 			h.store.Release(account)
 			lastErr = readErr
@@ -416,9 +424,12 @@ func (h *Handler) Messages(c *gin.Context) {
 		if outcome.penalize {
 			recyclePooledClientForAccount(account)
 			h.store.ReportRequestFailure(account, outcome.failureKind, time.Duration(totalDuration)*time.Millisecond)
+			h.store.MarkProxyFailure(proxyURL)
 		} else if outcome.logStatusCode == http.StatusOK {
-			h.store.ReportRequestSuccess(account, time.Duration(totalDuration)*time.Millisecond)
+			h.store.ReportRequestSuccessForModel(account, resolvedModel, time.Duration(totalDuration)*time.Millisecond)
+			h.store.MarkProxySuccess(proxyURL)
 		}
+		h.store.ReleaseProxy(proxyURL)
 		h.store.Release(account)
 		return
 	}

@@ -13,18 +13,18 @@ import (
 
 // anthropicRequest 表示 Anthropic Messages API 请求
 type anthropicRequest struct {
-	Model       string              `json:"model"`
-	MaxTokens   int                 `json:"max_tokens"`
-	System      json.RawMessage     `json:"system,omitempty"`
-	Messages    []anthropicMessage  `json:"messages"`
-	Tools       []anthropicTool     `json:"tools,omitempty"`
-	Stream      bool                `json:"stream,omitempty"`
-	Temperature *float64            `json:"temperature,omitempty"`
-	TopP        *float64            `json:"top_p,omitempty"`
-	StopSeqs    []string            `json:"stop_sequences,omitempty"`
-	Thinking    *anthropicThinking  `json:"thinking,omitempty"`
-	ToolChoice  json.RawMessage     `json:"tool_choice,omitempty"`
-	Metadata    json.RawMessage     `json:"metadata,omitempty"`
+	Model       string             `json:"model"`
+	MaxTokens   int                `json:"max_tokens"`
+	System      json.RawMessage    `json:"system,omitempty"`
+	Messages    []anthropicMessage `json:"messages"`
+	Tools       []anthropicTool    `json:"tools,omitempty"`
+	Stream      bool               `json:"stream,omitempty"`
+	Temperature *float64           `json:"temperature,omitempty"`
+	TopP        *float64           `json:"top_p,omitempty"`
+	StopSeqs    []string           `json:"stop_sequences,omitempty"`
+	Thinking    *anthropicThinking `json:"thinking,omitempty"`
+	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
+	Metadata    json.RawMessage    `json:"metadata,omitempty"`
 }
 
 type anthropicThinking struct {
@@ -104,69 +104,6 @@ type anthropicDelta struct {
 	StopReason  string `json:"stop_reason,omitempty"`
 }
 
-// ==================== 模型映射 ====================
-
-// defaultAnthropicModelMap 默认的模型映射（当数据库中无配置时使用）
-var defaultAnthropicModelMap = map[string]string{
-	"claude-opus-4-6":            "gpt-5.4",
-	"claude-opus-4-6-20250610":   "gpt-5.4",
-	"claude-haiku-4-5-20251001":  "gpt-5.4-mini",
-	"claude-haiku-4-5":           "gpt-5.4-mini",
-	"claude-sonnet-4-6":          "gpt-5.3-codex",
-	"claude-sonnet-4-5-20250929": "gpt-5.2-codex",
-	"claude-opus-4-5-20251101":   "gpt-5.3-codex",
-	"claude-sonnet-4-5-20250514": "gpt-5.4",
-	"claude-sonnet-4-5":          "gpt-5.4",
-	"claude-sonnet-4.5":          "gpt-5.4",
-	"claude-sonnet-4-20250514":   "gpt-5.4",
-	"claude-sonnet-4":            "gpt-5.4",
-	"claude-opus-4-20250514":     "gpt-5.4",
-	"claude-opus-4":              "gpt-5.4",
-	"claude-3-5-sonnet-20241022": "gpt-5.4",
-	"claude-3-5-haiku-20241022":  "gpt-5.4-mini",
-}
-
-// resolveAnthropicModel 将 Anthropic 模型名解析为 Codex 模型名
-// 优先使用数据库中的动态映射，回退到默认映射
-func resolveAnthropicModel(model string, dynamicMappingJSON string) string {
-	// 1. 尝试动态映射（从系统设置）
-	if dynamicMappingJSON != "" && dynamicMappingJSON != "{}" {
-		var dynamicMap map[string]string
-		if json.Unmarshal([]byte(dynamicMappingJSON), &dynamicMap) == nil {
-			if mapped, ok := dynamicMap[model]; ok && mapped != "" {
-				return mapped
-			}
-		}
-	}
-
-	// 2. 尝试默认映射
-	if mapped, ok := defaultAnthropicModelMap[model]; ok {
-		return mapped
-	}
-
-	// 3. 允许直接传入 Codex 模型名
-	for _, supported := range SupportedModels {
-		if model == supported {
-			return model
-		}
-	}
-
-	// 4. 模糊匹配
-	lower := strings.ToLower(model)
-	if strings.Contains(lower, "haiku") {
-		return "gpt-5.4-mini"
-	}
-	if strings.Contains(lower, "claude") {
-		return "gpt-5.4"
-	}
-
-	// 5. 默认
-	if len(SupportedModels) > 0 {
-		return SupportedModels[0]
-	}
-	return "gpt-5.4"
-}
-
 // ==================== Call ID 转换 ====================
 
 // toCodexCallID 将 Anthropic tool_use id 转换为 Codex call_id
@@ -198,7 +135,7 @@ func TranslateAnthropicToCodex(rawJSON []byte, modelMappingJSON string) ([]byte,
 	}
 
 	originalModel := req.Model
-	codexModel := resolveAnthropicModel(req.Model, modelMappingJSON)
+	codexModel := ResolveAnthropicModel(req.Model, modelMappingJSON)
 
 	// 构建 input 数组
 	input := buildCodexInput(req.System, req.Messages)
@@ -774,8 +711,8 @@ func (t *anthropicStreamTranslator) handleCompleted(data []byte) []anthropicStre
 			StopReason: stopReason,
 		},
 		Usage: &anthropicUsage{
-			InputTokens:         t.inputTokens,
-			OutputTokens:        t.outputTokens,
+			InputTokens:          t.inputTokens,
+			OutputTokens:         t.outputTokens,
 			CacheReadInputTokens: t.cachedTokens,
 		},
 	})
@@ -945,8 +882,8 @@ func buildAnthropicResponseFromCompleted(completedData []byte, model string) *an
 	usage := gjson.GetBytes(completedData, "response.usage")
 	if usage.Exists() {
 		resp.Usage = anthropicUsage{
-			InputTokens:         int(usage.Get("input_tokens").Int()),
-			OutputTokens:        int(usage.Get("output_tokens").Int()),
+			InputTokens:          int(usage.Get("input_tokens").Int()),
+			OutputTokens:         int(usage.Get("output_tokens").Int()),
 			CacheReadInputTokens: int(usage.Get("input_tokens_details.cached_tokens").Int()),
 		}
 	}

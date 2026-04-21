@@ -168,6 +168,46 @@ func TestGetUsageLogsRejectsInvalidAPIKeyID(t *testing.T) {
 	}
 }
 
+func TestListModelsReturnsEffectiveMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := auth.NewStore(nil, nil, &database.SystemSettings{
+		MaxConcurrency:  2,
+		TestConcurrency: 1,
+		TestModel:       "gpt-5.4",
+		ModelMapping:    `{"claude-opus-4-6":"gpt-5.2"}`,
+	})
+	handler := &Handler{store: store}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/admin/models", nil)
+
+	handler.ListModels(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		Models                    []string          `json:"models"`
+		DefaultAnthropicMapping   map[string]string `json:"default_anthropic_mapping"`
+		EffectiveAnthropicMapping map[string]string `json:"effective_anthropic_mapping"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Models) == 0 {
+		t.Fatal("expected non-empty models list")
+	}
+	if got := payload.DefaultAnthropicMapping["claude-opus-4-6"]; got != "gpt-5.4" {
+		t.Fatalf("default mapping = %q, want %q", got, "gpt-5.4")
+	}
+	if got := payload.EffectiveAnthropicMapping["claude-opus-4-6"]; got != "gpt-5.2" {
+		t.Fatalf("effective mapping = %q, want %q", got, "gpt-5.2")
+	}
+}
+
 func TestUpdateAccountSchedulerRejectsInvalidID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

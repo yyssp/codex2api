@@ -187,6 +187,10 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		}
 	}
 
+	if err := db.ensureSQLiteCredentialUniqueIndexes(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -225,6 +229,28 @@ func (db *DB) sqliteTableColumns(ctx context.Context, table string) (map[string]
 		result[name] = struct{}{}
 	}
 	return result, rows.Err()
+}
+
+func (db *DB) ensureSQLiteCredentialUniqueIndexes(ctx context.Context) error {
+	indexes := map[string]string{
+		"idx_accounts_unique_refresh_token_active": `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_unique_refresh_token_active
+			ON accounts (trim(json_extract(credentials, '$.refresh_token')))
+			WHERE status <> 'deleted' AND COALESCE(trim(json_extract(credentials, '$.refresh_token')), '') <> '';`,
+		"idx_accounts_unique_access_token_active": `CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_unique_access_token_active
+			ON accounts (trim(json_extract(credentials, '$.access_token')))
+			WHERE status <> 'deleted' AND COALESCE(trim(json_extract(credentials, '$.access_token')), '') <> '';`,
+	}
+	keys := make([]string, 0, len(indexes))
+	for name := range indexes {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		if err := db.createIndexAllowingHistoricalDuplicates(ctx, name, indexes[name]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *DB) getTrafficSnapshotSQLite(ctx context.Context) (*TrafficSnapshot, error) {
